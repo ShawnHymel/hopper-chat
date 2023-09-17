@@ -1,0 +1,17 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distro/packaging
+.Python
+build/
+dist/
+downloads/
+lib/
+lib64/
+wheels/
