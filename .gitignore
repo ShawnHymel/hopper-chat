@@ -1,5 +1,8 @@
-# Hide API key
+# ChatGPT API key
 key.txt
+
+# Models (large downloads)
+*.onnx
 
 # Python
 venv/

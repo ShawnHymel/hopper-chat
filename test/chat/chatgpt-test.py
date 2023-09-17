@@ -16,7 +16,7 @@ import openai
 
 # Settings
 KEY_PATH = "../../key.txt"
-MODEL = "gpt-3.5-turbo"
+MODEL = "gpt-4"
 
 # Load API key
 openai.api_key = open(KEY_PATH, 'r').read().strip('\n')
@@ -29,7 +29,7 @@ for model in models['data']:
 # Send input prompt to ChatGPT
 timestamp = time.time()
 msg_history = []
-prompt = "What is the circumference of the moon in km?" #"How do you pass an array as a pointer to a function in C++?"
+prompt = "How do you pass an array as a pointer to a function in C++?"
 msg_history.append({'role': "user", 'content': prompt})
 completion = openai.ChatCompletion.create(
     model=MODEL,
@@ -49,7 +49,7 @@ print()
 
 # Create follow-up question prompt
 timestamp = time.time()
-prompt = "What moon is that in reference to?"
+prompt = "Please summarize the previous response in 2 sentences."
 msg_history.append({'role': "user", 'content': prompt})
 completion = openai.ChatCompletion.create(
     model=MODEL,
@@ -66,5 +66,3 @@ print(f"Reply: {reply}")
 print(f"Response time: {resp_time}")
 print(f"Token usage: {completion.usage['total_tokens']}")
 print()
-
-# 
