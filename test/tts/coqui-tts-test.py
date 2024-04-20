@@ -2,7 +2,7 @@
 
 Installation:
 
-    python -m pip install TTS
+    python -m pip install TTS==0.22.0
     python -m pip install numpy==1.22.4
     
 From: https://tts.readthedocs.io/en/latest/inference.html

@@ -1,5 +1,6 @@
-# ChatGPT API key
+# API keys
 key.txt
+.env
 
 # Models (large downloads)
 *.onnx
