@@ -29,8 +29,8 @@ from TTS.api import TTS
 DEBUG = True
 
 # Set input and output audio devices (get from the "Available sound devices")
-AUDIO_INPUT_INDEX = 2
-AUDIO_OUTPUT_INDEX = 1
+AUDIO_INPUT_INDEX = 1
+AUDIO_OUTPUT_INDEX = 2
 
 # Volume (1.0 = normal, 2.0 = double volume)
 AUDIO_OUTPUT_VOLUME = 1.0
