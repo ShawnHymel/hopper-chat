@@ -19,7 +19,7 @@ RUN \
     wget -O model.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json?download=true.json
 
 # Expose the port the server will run on
-EXPOSE 5002
+EXPOSE 10803
 
 # Command to run the server
-ENTRYPOINT ["python3", "-m", "piper.http_server", "--model", "/app/models/model.onnx", "--config", "/app/models/model.onnx.json", "--port", "5002"]
+ENTRYPOINT ["python3", "-m", "piper.http_server", "--model", "/app/models/model.onnx", "--config", "/app/models/model.onnx.json", "--port", "10803"]
