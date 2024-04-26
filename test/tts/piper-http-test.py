@@ -7,7 +7,7 @@ import sounddevice as sd
 import soundfile as sf
 
 # URL and parameters
-url = 'http://10.0.0.100:5002'
+url = 'http://10.0.0.100:10803'
 params = {'text': 'This is a test.'}
 wav_path = "./test.wav"
 

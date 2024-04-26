@@ -18,15 +18,17 @@ import sys
 import json
 import os
 from collections import deque
+import time
+import io
 
+import requests
 from dotenv import load_dotenv
 import numpy as np
 import resampy
 import sounddevice as sd
 import soundfile as sf
 from vosk import Model, KaldiRecognizer
-from ollama import Client
-from TTS.api import TTS
+import ollama
 
 #---------------------------------------------------------------------------------------------------
 # Settings
@@ -65,16 +67,21 @@ ACTION_STOP = [             # Return to waiting for wake phrase
     "never mind",
 ]
 
+# Server settings
+SERVER_IP = "10.0.0.143"
+
+# Chat settings
+CHAT_MAX_HISTORY = 20           # Number of prompts and replies to remember
+CHAT_MAX_REPLY_SENTENCES = 2    # Max number of sentences to respond with (0 is infinite)
+
 # Ollama settings
-OLLAMA_SERVER_URL = "http://10.0.0.100:11434"
-OLLAMA_MODEL = "llama3"
-OLLAMA_MAX_HISTORY = 20        # Number of prompts and replies to remember
-OLLAMA_MAX_REPLY_SENTENCES = 2 # Max number of sentences to respond with (0 is infinite)
-OLLAMA_GET_FULL_REPLY = False  # Get full reply after getting the summary
+OLLAMA_SERVER_URL = f"http://{SERVER_IP}:10802"
+OLLAMA_MODEL = "llama3:8b"
+
 
 # TTS settings
 TTS_ENABLE = True
-TTS_MODEL = "tts_models/en/ljspeech/speedy-speech"  # Run `tts --list_models` to see options
+PIPER_URL = f"http://{SERVER_IP}:10803"
 TTS_MODEL_SAMPLE_RATE = 22050   # Determined by model
 
 #---------------------------------------------------------------------------------------------------
@@ -140,6 +147,7 @@ def query_chat(msg):
     """
 
     global msg_history
+    global chat_client
 
     # Add prompt to message history
     msg_history.push({
@@ -147,22 +155,49 @@ def query_chat(msg):
         "content": msg,
     })
 
-    print(msg_history.get())
-
-    # Query ChatGPT
-    completion = gpt_client.chat.completions.create(
-        model=GPT_MODEL,
-        messages=msg_history.get()
+    # Query Ollama
+    stream = chat_client.chat(
+        model=OLLAMA_MODEL,
+        messages=msg_history.get(),
+        stream=True
     )
-    
-    # Extract text reply and append to message history
-    reply = completion.choices[0].message.content
+
+    # Stream reply
+    reply = ""
+    for chunk in stream:
+        part = chunk["message"]["content"]
+        # print(part, end="", flush=True)
+        reply = reply + part
+
+    # Add reply to message history
     msg_history.push({
         "role": "assistant",
         "content": reply,
     })
 
     return reply
+
+def do_tts(msg):
+    """
+    Send text to TTS engine and play sound over speakers.
+    """
+
+    # Make request
+    params = {"text": msg,}
+    resp = requests.get(PIPER_URL, params=params)
+
+    # Resample the audio
+    wav, sample_rate = sf.read(io.BytesIO(resp.content))
+    wav = np.array(wav) * AUDIO_OUTPUT_VOLUME
+    wav = resampy.resample(
+        wav,
+        sample_rate,
+        AUDIO_OUTPUT_SAMPLE_RATE
+    )
+
+    # Play the audio
+    sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
+    sd.wait()
 
 #---------------------------------------------------------------------------------------------------
 # Main
@@ -202,23 +237,21 @@ recognizer = KaldiRecognizer(model, sample_rate)
 recognizer.SetWords(False)
 
 # Initialize Ollama client
-chat_client = Client(host=OLLAMA_SERVER_URL)
-
-# Initialize TTS
-if TTS_ENABLE:
-    tts = TTS(model_name=TTS_MODEL, progress_bar=False)
+chat_client = ollama.Client(host=OLLAMA_SERVER_URL)
 
 # Superloop
-msg_history = FixedSizeQueue(GPT_MAX_HISTORY)
+msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
 while True:
     
     # Listen for wake word or phrase
+    timestamp = time.time()
     text = wait_for_stt(sd, recognizer)
     if DEBUG:
         print(f"Heard: {text}")
     if text in WAKE_PHRASES:
         if DEBUG:
             print(f"Wake phrase detected.")
+            print(f"STT time: {time.time() - timestamp}")
     else:
         continue
 
@@ -228,10 +261,12 @@ while True:
         sd.wait()
 
     # Listen for query
+    timestamp = time.time()
     text = wait_for_stt(sd, recognizer)
     if text != "":
         if DEBUG:
             print(f"Heard: {text}")
+            print(f"STT time: {time.time() - timestamp}")
     else:
         if DEBUG:
             print("No sound detected. Returning to wake word detection.")
@@ -242,7 +277,7 @@ while True:
     if text in ACTION_CLEAR_HISTORY:
         if DEBUG:
             print("ACTION: clearning history")
-        msg_history = FixedSizeQueue(GPT_MAX_HISTORY)
+        msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
         continue
     elif text in ACTION_STOP:
         if DEBUG:
@@ -253,30 +288,22 @@ while True:
     else:
 
         # Send request with limited reply length
-        if GPT_MAX_REPLY_SENTENCES > 0:
-            msg = text + f". Your response must be {GPT_MAX_REPLY_SENTENCES} sentences or fewer."
+        if CHAT_MAX_REPLY_SENTENCES > 0:
+            msg = text + f". Your response must be {CHAT_MAX_REPLY_SENTENCES} sentences or fewer."
+        else:
+            msg = text
         if DEBUG:
             print(f"Sending: {msg}")
+        timestamp = time.time()
         reply = query_chat(msg)
         if DEBUG:
             print(f"Received: {reply}")
-
-        # Repeat the query to get the full reply
-        # TODO: Looks like it's still giving us a truncated version. Come back and fix this.
-        if GPT_GET_FULL_REPLY:
-            msg = "Repeat the previous request, but do so without any limit on number of sentences."
-            if DEBUG:
-                print(f"Sending: {msg}")
-            reply_full = query_chat(msg)
-            if DEBUG:
-                print(f"Received: {reply}")
+            print(f"LLM time: {time.time() - timestamp}")
 
         # Perform text-to-speech (TTS)
         if TTS_ENABLE and reply:
             if DEBUG:
                 print("Playing reply...")
-            wav = tts.tts(text=reply)
-            wav = np.array(wav) * AUDIO_OUTPUT_VOLUME
-            wav = resampy.resample(wav, TTS_MODEL_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE)
-            sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
-            sd.wait()
+            do_tts(reply)
+            if DEBUG:
+                print(f"TTS time: {time.time() - timestamp}")
