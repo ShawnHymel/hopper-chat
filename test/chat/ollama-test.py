@@ -1,10 +1,13 @@
-import re
+import regex
 from ollama import Client
 
 chat_client = Client(host="http://10.0.0.100:10802")
-SENTENCE_REGEX = r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!\:\;)\s'
+SENTENCE_REGEX = r"(?<=\.|\?|\!|\:|\;|\.\.\.)\s+(?=[A-Z0-9]|\Z)"
 
 messages = []
+
+# Create regex pattern
+pattern = regex.compile(SENTENCE_REGEX, flags=regex.VERSION1)
 
 def split_sentences(str):
   start_idx = 0
@@ -30,13 +33,16 @@ def send(chat):
   sentence = ""
   for chunk in stream:
     part = chunk['message']['content']
-
-    # Try to parse into a sentence
-    sentence += part
-    print(sentence)
-
-
     response += part
+
+    # Try to parse into sentences
+    sentences = pattern.split(response)
+
+    # TODO: Figure out how to extract one part at a time
+    if len(sentences) > 1:
+      print(sentences[-2])
+
+  print(f"Response: {response}")
 
   messages.append(
     {
