@@ -26,6 +26,16 @@ You will need to install Docker. Follow one of these tutorials to do so:
  * Ubuntu: https://docs.docker.com/engine/install/debian/#os-requirements
  * Linux Mint: https://linuxiac.com/how-to-install-docker-on-linux-mint-21/
 
+You will probably need to add the user to the `docker` group if you don't want to run Docker with admin privileges. This will solve the `permission denied` error when you try to run the `docker` commands below. From [this thread](https://stackoverflow.com/questions/48957195/how-to-fix-docker-got-permission-denied-issue):
+
+```sh
+sudo groupadd docker
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+You might need to reboot or restart Docker if you still get `permission denied` errors.
+
 Next, download this repository.
 
 ```sh
@@ -76,10 +86,8 @@ source venv/bin/activate
 Install other dependencies. I pinned the versions to ensure everything would work together:
 
 ```sh
-python -m pip install requests==2.25.1 sounddevice==0.4.6 vosk==0.3.45 python-dotenv==1.0.1 openai==1.23.2 resampy==0.4.3 ollama==0.1.9
+python -m pip install -r requirements-llama.txt
 ```
-
-TODO: put the above into a *requirements.txt* file.
 
 ### Setup
 

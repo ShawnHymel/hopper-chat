@@ -5,6 +5,7 @@ FROM python:3.10
 WORKDIR /app
 
 # Install dependencies
+# Models: https://github.com/rhasspy/piper/blob/master/VOICES.md
 RUN \
     git init && \
     git remote add origin https://github.com/rhasspy/piper && \
@@ -15,8 +16,8 @@ RUN \
     python3 -m pip install -r requirements_http.txt && \
     mkdir -p /app/models/ && \
     cd /app/models/ && \
-    wget -O model.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx?download=true && \
-    wget -O model.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json?download=true.json
+    wget -O model.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/low/en_US-lessac-low.onnx?download=true && \
+    wget -O model.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/low/en_US-lessac-low.onnx.json?download=true.json
 
 # Expose the port the server will run on
 EXPOSE 10803

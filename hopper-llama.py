@@ -1,11 +1,8 @@
 """
 Hopper Chat with Ollama backend (local network)
 
-Install dependences
-
-See README for STT and TTS. For Ollama:
-
-    python -m pip install ollama
+Ollama models: https://ollama.com/library
+Rhasspy Piper TTS models: https://github.com/rhasspy/piper/blob/master/VOICES.md
 
 Author: Shawn Hymel
 Date: April 20, 2024
@@ -76,7 +73,7 @@ CHAT_MAX_REPLY_SENTENCES = 2    # Max number of sentences to respond with (0 is 
 
 # Ollama settings
 OLLAMA_SERVER_URL = f"http://{SERVER_IP}:10802"
-OLLAMA_MODEL = "llama3:8b"
+OLLAMA_MODEL = "llama3:8b"      # Must match what the server is running
 
 
 # TTS settings
@@ -175,6 +172,8 @@ def query_chat(msg):
         "content": reply,
     })
 
+    print(msg_history.get())
+
     return reply
 
 def do_tts(msg):
@@ -251,7 +250,7 @@ while True:
     if text in WAKE_PHRASES:
         if DEBUG:
             print(f"Wake phrase detected.")
-            print(f"STT time: {time.time() - timestamp}")
+            print(f"STT time: {round(time.time() - timestamp, 1)} sec")
     else:
         continue
 
@@ -266,7 +265,7 @@ while True:
     if text != "":
         if DEBUG:
             print(f"Heard: {text}")
-            print(f"STT time: {time.time() - timestamp}")
+            print(f"STT time: {round(time.time() - timestamp, 1)} sec")
     else:
         if DEBUG:
             print("No sound detected. Returning to wake word detection.")
@@ -298,7 +297,7 @@ while True:
         reply = query_chat(msg)
         if DEBUG:
             print(f"Received: {reply}")
-            print(f"LLM time: {time.time() - timestamp}")
+            print(f"LLM time: {round(time.time() - timestamp, 1)} sec")
 
         # Perform text-to-speech (TTS)
         if TTS_ENABLE and reply:
@@ -306,4 +305,4 @@ while True:
                 print("Playing reply...")
             do_tts(reply)
             if DEBUG:
-                print(f"TTS time: {time.time() - timestamp}")
+                print(f"TTS time: {round(time.time() - timestamp, 1)} sec")
