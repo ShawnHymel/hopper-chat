@@ -1,8 +1,18 @@
+import re
 from ollama import Client
 
-chat_client = Client(host="http://10.0.0.143:10802")
+chat_client = Client(host="http://10.0.0.100:10802")
+SENTENCE_REGEX = r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!\:\;)\s'
 
 messages = []
+
+def split_sentences(str):
+  start_idx = 0
+  for i, char in enumerate(str):
+    if char in SENTENCE_DELIMITERS:
+      sentence = str[start_idx:i + 1].strip()
+      print(sentence)
+      start_idx = i + 1
 
 def send(chat):
   messages.append(
@@ -17,10 +27,16 @@ def send(chat):
   )
 
   response = ""
+  sentence = ""
   for chunk in stream:
     part = chunk['message']['content']
-    print(part, end='', flush=True)
-    response = response + part
+
+    # Try to parse into a sentence
+    sentence += part
+    print(sentence)
+
+
+    response += part
 
   messages.append(
     {
