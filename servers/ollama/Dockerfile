@@ -6,7 +6,6 @@ WORKDIR /app
 
 # Set the port for the ollama server
 ENV OLLAMA_HOST 0.0.0.0:10802
-https://stackoverflow.com/questions/77537989/docker-error-oci-runtime-create-failed-runc-create-failed-unable-to-start-con
 EXPOSE 10802
 
 # Download the model
