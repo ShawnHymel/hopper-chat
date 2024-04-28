@@ -19,4 +19,4 @@ RUN \
     ps -ef | grep 'ollama serve' | grep -v grep | awk '{print $2}' | xargs -r kill -9
 
 # Command to run the server
-ENTRYPOINT ["/bin/bash", "-c", "ollama serve & sleep 5 ; ollama run llama3:8b"]
+ENTRYPOINT ["/bin/bash", "-c", "ollama serve"]
