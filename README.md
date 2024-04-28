@@ -60,6 +60,14 @@ docker run -it --rm -p 10803:10803 piper-tts
 
 Note: you only need to run the `docker build` commands once. In the future, you can just do `docker run` for each of the servers.
 
+If you need to completely remove the images for some reason, use:
+
+```sh
+docker image rm ollama
+docker image rm piper-tts
+docker builder prune
+```
+
 ### Install client OS
 
 Next, we're going to run the client on a Raspberry Pi that performs STT and talks to the LLM and TTS servers across a local network.
@@ -70,10 +78,17 @@ Plug in the microphone and speaker.
 
 ### Install Dependencies
 
+Download this repository.
+
+```sh
+git clone https://github.com/ShawnHymel/hopper-chat
+cd hopper-chat
+```
+
 Make sure *pip* is up to date:
 
 ```sh
-python -m pip install –upgrade pip
+python -m pip install --upgrade pip
 ```
 
 **Optional**: install Python packages and run everything in a virtual environment:
@@ -91,13 +106,6 @@ python -m pip install -r requirements-llama.txt
 
 ### Setup
 
-Download this repository.
-
-```sh
-git clone https://github.com/ShawnHymel/hopper-chat
-cd hopper-chat
-```
-
 To start, you'll likely want to adjust your speaker volume. Either do that through the desktop GUI or using *alsamixer*:
 
 ```sh
@@ -108,7 +116,7 @@ alsamixer
 Run the script once to get a printout of available audio systems. Note the index number for each one.
 
 ```sh
-$ python hopper-gpt.py 
+$ python hopper-llama.py 
 Available sound devices:
    0 bcm2835 Headphones: - (hw:0,0), ALSA (0 in, 8 out)
    1 UM02: USB Audio (hw:1,0), ALSA (1 in, 0 out)

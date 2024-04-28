@@ -17,6 +17,7 @@ import os
 from collections import deque
 import time
 import io
+import threading
 
 import requests
 from dotenv import load_dotenv
@@ -65,7 +66,7 @@ ACTION_STOP = [             # Return to waiting for wake phrase
 ]
 
 # Server settings
-SERVER_IP = "10.0.0.143"
+SERVER_IP = "10.0.0.100"
 
 # Chat settings
 CHAT_MAX_HISTORY = 20           # Number of prompts and replies to remember

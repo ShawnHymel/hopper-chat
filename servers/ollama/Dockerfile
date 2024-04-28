@@ -6,8 +6,6 @@ WORKDIR /app
 
 # Set the port for the ollama server
 ENV OLLAMA_HOST 0.0.0.0:10802
-
-# Expose the port the server will run on
 EXPOSE 10802
 
 # Download the model
