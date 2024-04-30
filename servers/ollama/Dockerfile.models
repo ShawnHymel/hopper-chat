@@ -1,0 +1,22 @@
+# Use this Dockerfile when pulling in a local set of ollama models.
+# It will copy in the entire .ollama directory from another system.
+# You share the private SSH key when doing this. It's not scure.
+# Use with caution.
+
+# Unzip the models and metadata into this directory (./.ollama)
+
+# Use an appropriate base image
+FROM ollama/ollama:0.1.32
+
+# Set the working directory
+WORKDIR /app
+
+# Set the port for the ollama server
+ENV OLLAMA_HOST 0.0.0.0:10802
+EXPOSE 10802
+
+# Copy in the model and metadata
+COPY .ollama/ /root/.ollama/
+
+# Command to run the server
+ENTRYPOINT ["/bin/bash", "-c", "ollama serve"]

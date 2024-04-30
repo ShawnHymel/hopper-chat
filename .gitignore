@@ -22,3 +22,6 @@ downloads/
 lib/
 lib64/
 wheels/
+
+# Ollama stuff
+.ollama/
