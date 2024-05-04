@@ -39,8 +39,7 @@ def send(chat):
     sentences = pattern.split(response)
 
     # TODO: Figure out how to extract one part at a time
-    if len(sentences) > 1:
-      print(sentences[-2])
+    print(len(sentences))
 
   print(f"Response: {response}")
 
