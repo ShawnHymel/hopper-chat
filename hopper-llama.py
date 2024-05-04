@@ -19,6 +19,7 @@ import time
 import io
 import threading
 
+import regex
 import requests
 from dotenv import load_dotenv
 import numpy as np
@@ -71,6 +72,7 @@ SERVER_IP = "10.0.0.100"
 # Chat settings
 CHAT_MAX_HISTORY = 20           # Number of prompts and replies to remember
 CHAT_MAX_REPLY_SENTENCES = 2    # Max number of sentences to respond with (0 is infinite)
+SENTENCE_REGEX = r"(?<=\.|\?|\!|\:|\;|\.\.\.|\n|\n\n)\s+(?=[A-Z0-9]|\Z)"    # Parsing sentences
 
 # Ollama settings
 OLLAMA_SERVER_URL = f"http://{SERVER_IP}:10802"
@@ -101,35 +103,31 @@ class FixedSizeQueue:
 #---------------------------------------------------------------------------------------------------
 # Functions
 
-def callback_record(in_data, frames, time, debug):
+def record_callback(in_data, frames, time, status, q):
     """
     Fill global input queue with audio data
     """
-    global in_q
-
-    if debug:
+    if status:
         print(status, file=sys.stderr)
-    in_q.put(bytes(in_data))
+    q.put(bytes(in_data))
 
-def wait_for_stt(sd, recognizer):
+def wait_for_stt(sd, q, recognizer):
     """
     Wait for STT to hear something and return the text
     """
-
-    global in_q
 
     # Listen for wake word/phrase
     with sd.RawInputStream(
         dtype="int16",
         channels=1,
-        callback=callback_record
+        callback=lambda in_data, frames, time, status: record_callback(in_data, frames, time, status, q)
     ):
         if DEBUG:
             print("Listening...")
     
         # Perform keyword spotting
         while True:
-            data = in_q.get()
+            data = q.get()
             if recognizer.AcceptWaveform(data):
 
                 # Perform speech-to-text (STT)
@@ -139,13 +137,10 @@ def wait_for_stt(sd, recognizer):
 
                 return result_text
 
-def query_chat(msg):
+def query_chat(chat_client, msg, msg_history, q, pattern):
     """
     Send message to chat backend (Ollama) and return response text
     """
-
-    global msg_history
-    global chat_client
 
     # Add prompt to message history
     msg_history.push({
@@ -160,12 +155,30 @@ def query_chat(msg):
         stream=True
     )
 
-    # Stream reply
+    # Parse reply for sentences
     reply = ""
+    sentences = deque([""])
     for chunk in stream:
+
+        # Get the next string part from the stream
         part = chunk["message"]["content"]
-        # print(part, end="", flush=True)
         reply = reply + part
+
+        # Parse sentences and put them into the queue
+        tmp_str = sentences[0] + part
+        tmp_sentences = pattern.split(tmp_str)
+        sentences[0] = tmp_sentences[0]
+        if len(tmp_sentences) > 1:
+          ret_sentence = sentences.popleft()
+          ret_sentence = ret_sentence.replace("\n", " ")
+          q.put(ret_sentence)
+          for tmp in tmp_sentences[1:]:
+            sentences.append(tmp)
+
+    # All done. Add final sentence and None delimiter.
+    q.put(sentences[0])
+    q.put(None)
+
 
     # Add reply to message history
     msg_history.push({
@@ -173,137 +186,193 @@ def query_chat(msg):
         "content": reply,
     })
 
-    print(msg_history.get())
+    # Print the chat
+    if DEBUG:
+        # print(msg_history.get())
+        print(f"Whole reply: {reply}")
 
-    return reply
-
-def do_tts(msg):
+def start_tts_thread(q, tts_semaphore):
     """
-    Send text to TTS engine and play sound over speakers.
+    Wait for message in queue, send it to TTS server, then play the sound.
     """
 
-    # Make request
-    params = {"text": msg,}
-    resp = requests.get(PIPER_URL, params=params)
+    # Thread main loop
+    while True:
 
-    # Resample the audio
-    wav, sample_rate = sf.read(io.BytesIO(resp.content))
-    wav = np.array(wav) * AUDIO_OUTPUT_VOLUME
-    wav = resampy.resample(
-        wav,
-        sample_rate,
-        AUDIO_OUTPUT_SAMPLE_RATE
-    )
+        # Get message from queue
+        while not q.empty():
+            msg = q.get()
 
-    # Play the audio
-    sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
-    sd.wait()
+            # Notify main thread that we're done
+            if msg is None:
+                tts_semaphore.release()
+                continue
+
+            # Print sentences as they come in
+            if DEBUG:
+                print(f"RECV: {msg}")
+
+            # Only play audio if TTS is enabled
+            if TTS_ENABLE:
+
+                # Time it
+                timestamp = time.time()
+
+                # Make request
+                params = {"text": msg,}
+                resp = requests.get(PIPER_URL, params=params)
+
+                # Resample the audio
+                wav, sample_rate = sf.read(io.BytesIO(resp.content))
+                wav = np.array(wav) * AUDIO_OUTPUT_VOLUME
+                wav = resampy.resample(
+                    wav,
+                    sample_rate,
+                    AUDIO_OUTPUT_SAMPLE_RATE
+                )
+
+                # Play the audio
+                sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
+                sd.wait()
+
+                # Print time
+                if DEBUG:
+                    print(f"TTS time: {round(time.time() - timestamp, 1)} sec")
+
+        # Let the thread rest
+        time.sleep(0.1)
 
 #---------------------------------------------------------------------------------------------------
 # Main
 
-# Print available sound devices
-if DEBUG:
-    print("Available sound devices:")
-    print(sd.query_devices())
+def main():
 
-# Set the input and output devices
-sd.default.device = [AUDIO_INPUT_INDEX, AUDIO_OUTPUT_INDEX]
-
-# Get sample rate
-device_info = sd.query_devices(sd.default.device[0], "input")
-sample_rate = int(device_info["default_samplerate"])
-
-# Display input device info
-if DEBUG:
-    print(f"Input device info: {json.dumps(device_info, indent=2)}")
-
-# Load notification sound into memory
-if NOTIFICATION_PATH:
-    notification_wav, notification_sample_rate = sf.read(NOTIFICATION_PATH)
-    notification_wav = np.array(notification_wav) * AUDIO_OUTPUT_VOLUME
-    notification_wav = resampy.resample(
-        notification_wav,
-        notification_sample_rate,
-        AUDIO_OUTPUT_SAMPLE_RATE
-    )
-
-# Set up queue and callback
-in_q = queue.Queue()
-
-# Build the model
-model = Model(lang="en-us")
-recognizer = KaldiRecognizer(model, sample_rate)
-recognizer.SetWords(False)
-
-# Initialize Ollama client
-chat_client = ollama.Client(host=OLLAMA_SERVER_URL)
-
-# Superloop
-msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
-while True:
-    
-    # Listen for wake word or phrase
-    timestamp = time.time()
-    text = wait_for_stt(sd, recognizer)
+    # Print available sound devices
     if DEBUG:
-        print(f"Heard: {text}")
-    if text in WAKE_PHRASES:
-        if DEBUG:
-            print(f"Wake phrase detected.")
-            print(f"STT time: {round(time.time() - timestamp, 1)} sec")
-    else:
-        continue
+        print("Available sound devices:")
+        print(sd.query_devices())
 
-    # Play notification sound
+    # Set the input and output devices
+    sd.default.device = [AUDIO_INPUT_INDEX, AUDIO_OUTPUT_INDEX]
+
+    # Get sample rate
+    device_info = sd.query_devices(sd.default.device[0], "input")
+    sample_rate = int(device_info["default_samplerate"])
+
+    # Display input device info
+    if DEBUG:
+        print(f"Input device info: {json.dumps(device_info, indent=2)}")
+
+    # Load notification sound into memory
     if NOTIFICATION_PATH:
-        sd.play(notification_wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
-        sd.wait()
+        notification_wav, notification_sample_rate = sf.read(NOTIFICATION_PATH)
+        notification_wav = np.array(notification_wav) * AUDIO_OUTPUT_VOLUME
+        notification_wav = resampy.resample(
+            notification_wav,
+            notification_sample_rate,
+            AUDIO_OUTPUT_SAMPLE_RATE
+        )
 
-    # Listen for query
-    timestamp = time.time()
-    text = wait_for_stt(sd, recognizer)
-    if text != "":
+    # Set up queue and callback
+    in_q = queue.Queue()
+
+    # Build the model
+    model = Model(lang="en-us")
+    recognizer = KaldiRecognizer(model, sample_rate)
+    recognizer.SetWords(False)
+
+    # Initialize Ollama client
+    chat_client = ollama.Client(host=OLLAMA_SERVER_URL)
+
+    # Create regex pattern for parsing sentences
+    sentence_pattern = regex.compile(SENTENCE_REGEX, flags=regex.VERSION1)
+
+    # Semaphore used to notify main thread when TTS is done
+    tts_semaphore = threading.BoundedSemaphore(1)
+    tts_semaphore.acquire()
+
+    # Start TTS thread
+    msg_queue = queue.Queue()
+    tts_thread = threading.Thread(target=start_tts_thread, args=(msg_queue, tts_semaphore))
+    tts_thread.start()
+
+    # Superloop
+    msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
+    while True:
+        
+        # Listen for wake word or phrase
+        timestamp = time.time()
+        text = wait_for_stt(sd, in_q, recognizer)
         if DEBUG:
             print(f"Heard: {text}")
-            print(f"STT time: {round(time.time() - timestamp, 1)} sec")
-    else:
-        if DEBUG:
-            print("No sound detected. Returning to wake word detection.")
-        continue
-    listening_for_query = False
-
-    # Perform actions for particular phrases
-    if text in ACTION_CLEAR_HISTORY:
-        if DEBUG:
-            print("ACTION: clearning history")
-        msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
-        continue
-    elif text in ACTION_STOP:
-        if DEBUG:
-            print("ACTION: stop listening")
-        continue
-
-    # Default action: query chat backend
-    else:
-
-        # Send request with limited reply length
-        if CHAT_MAX_REPLY_SENTENCES > 0:
-            msg = text + f". Your response must be {CHAT_MAX_REPLY_SENTENCES} sentences or fewer."
+        if text in WAKE_PHRASES:
+            if DEBUG:
+                print(f"Wake phrase detected.")
+                print(f"STT time: {round(time.time() - timestamp, 1)} sec")
         else:
-            msg = text
-        if DEBUG:
-            print(f"Sending: {msg}")
-        timestamp = time.time()
-        reply = query_chat(msg)
-        if DEBUG:
-            print(f"Received: {reply}")
-            print(f"LLM time: {round(time.time() - timestamp, 1)} sec")
+            continue
 
-        # Perform text-to-speech (TTS)
-        if TTS_ENABLE and reply:
+        # Play notification sound
+        if NOTIFICATION_PATH:
+            sd.play(
+                notification_wav,
+                samplerate=AUDIO_OUTPUT_SAMPLE_RATE,
+                device=AUDIO_OUTPUT_INDEX
+            )
+            sd.wait()
+
+        # Listen for query
+        timestamp = time.time()
+        text = wait_for_stt(sd, in_q, recognizer)
+        if text != "":
             if DEBUG:
-                print("Playing reply...")
-            do_tts(reply)
+                print(f"Heard: {text}")
+                print(f"STT time: {round(time.time() - timestamp, 1)} sec")
+        else:
             if DEBUG:
-                print(f"TTS time: {round(time.time() - timestamp, 1)} sec")
+                print("No sound detected. Returning to wake word detection.")
+            continuese
+
+        # Perform actions for particular phrases
+        if text in ACTION_CLEAR_HISTORY:
+            if DEBUG:
+                print("ACTION: clearning history")
+            msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
+            continue
+        elif text in ACTION_STOP:
+            if DEBUG:
+                print("ACTION: stop listening")
+            continue
+
+        # Default action: query chat backend
+        else:
+
+            # Start wall clock timer
+            wall_timestamp = time.time()
+
+            # Send request with limited reply length. Sentences are added to TTS queue.
+            if CHAT_MAX_REPLY_SENTENCES > 0:
+                msg = text + \
+                    f". Your response must be {CHAT_MAX_REPLY_SENTENCES} sentences or fewer."
+            else:
+                msg = text
+            if DEBUG:
+                print(f"Sending: {msg}")
+            timestamp = time.time()
+            query_chat(
+                chat_client,
+                msg,
+                msg_history,
+                msg_queue,
+                sentence_pattern
+            )
+            if DEBUG:
+                print(f"LLM time: {round(time.time() - timestamp, 1)} sec")
+
+            # Wait for TTS thread to finish
+            tts_semaphore.acquire(blocking=True)
+            if DEBUG:
+                print(f"Full query complete in {round(time.time() - wall_timestamp, 1)} sec")
+
+if __name__ == "__main__":
+    main()
