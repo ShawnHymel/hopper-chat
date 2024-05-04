@@ -137,10 +137,34 @@ def wait_for_stt(sd, q, recognizer):
 
                 return result_text
 
-def query_chat(chat_client, msg, msg_history, q, pattern):
+def play_msg(msg, tts_q, sound_semaphore):
+    """
+    Parse message into sentences and play them. This is blocking until sound is done playing.
+    """
+
+    # Only do this if TTS is enabled
+    if TTS_ENABLE:
+
+        # Create regex pattern for parsing sentences
+        pattern = regex.compile(SENTENCE_REGEX, flags=regex.VERSION1)
+
+        # Parse message into sentences and send them to the TTS thread
+        msg = msg.replace("\n", " ")
+        sentences = pattern.split(msg)
+        for sentence in sentences:
+            tts_q.put(sentence)
+        tts_q.put(None)
+
+        # Wait for sound to stop
+        sound_semaphore.acquire(blocking=True)
+
+def query_chat(chat_client, msg, msg_history, q):
     """
     Send message to chat backend (Ollama) and return response text
     """
+
+    # Create regex pattern for parsing sentences
+    pattern = regex.compile(SENTENCE_REGEX, flags=regex.VERSION1)
 
     # Add prompt to message history
     msg_history.push({
@@ -169,16 +193,21 @@ def query_chat(chat_client, msg, msg_history, q, pattern):
         tmp_sentences = pattern.split(tmp_str)
         sentences[0] = tmp_sentences[0]
         if len(tmp_sentences) > 1:
-          ret_sentence = sentences.popleft()
-          ret_sentence = ret_sentence.replace("\n", " ")
-          q.put(ret_sentence)
-          for tmp in tmp_sentences[1:]:
-            sentences.append(tmp)
+            ret_sentence = sentences.popleft()
+            ret_sentence = ret_sentence.replace("\n", " ")
+            if TTS_ENABLE:
+                q.put(ret_sentence)
+            if DEBUG:
+                print(f"RECV: {ret_sentence}")
+            for tmp in tmp_sentences[1:]:
+                sentences.append(tmp)
 
     # All done. Add final sentence and None delimiter.
-    q.put(sentences[0])
-    q.put(None)
-
+    if TTS_ENABLE:
+        q.put(sentences[0])
+        q.put(None)
+    if DEBUG:
+        print(f"RECV: {sentences[0]}")
 
     # Add reply to message history
     msg_history.push({
@@ -191,53 +220,62 @@ def query_chat(chat_client, msg, msg_history, q, pattern):
         # print(msg_history.get())
         print(f"Whole reply: {reply}")
 
-def start_tts_thread(q, tts_semaphore):
+def start_tts_thread(tts_q, sound_q):
     """
-    Wait for message in queue, send it to TTS server, then play the sound.
+    Wait for message in queue, send it to TTS server, then queue up sound to be played.
     """
 
     # Thread main loop
     while True:
 
         # Get message from queue
-        while not q.empty():
-            msg = q.get()
+        while not tts_q.empty():
+            msg = tts_q.get()
 
-            # Notify main thread that we're done
+            # Notify sound thread that we're done
             if msg is None:
-                tts_semaphore.release()
+                sound_q.put(None)
                 continue
 
-            # Print sentences as they come in
-            if DEBUG:
-                print(f"RECV: {msg}")
+            # Make request
+            params = {"text": msg,}
+            resp = requests.get(PIPER_URL, params=params)
 
-            # Only play audio if TTS is enabled
-            if TTS_ENABLE:
+            # Resample the audio
+            wav, sample_rate = sf.read(io.BytesIO(resp.content))
+            wav = np.array(wav) * AUDIO_OUTPUT_VOLUME
+            wav = resampy.resample(
+                wav,
+                sample_rate,
+                AUDIO_OUTPUT_SAMPLE_RATE
+            )
 
-                # Time it
-                timestamp = time.time()
+            # Queue the audio
+            sound_q.put(wav)
 
-                # Make request
-                params = {"text": msg,}
-                resp = requests.get(PIPER_URL, params=params)
+        # Let the thread rest
+        time.sleep(0.1)
 
-                # Resample the audio
-                wav, sample_rate = sf.read(io.BytesIO(resp.content))
-                wav = np.array(wav) * AUDIO_OUTPUT_VOLUME
-                wav = resampy.resample(
-                    wav,
-                    sample_rate,
-                    AUDIO_OUTPUT_SAMPLE_RATE
-                )
+def start_sound_thread(sound_q, sound_semaphore):
+    """
+    Wait for sound binary in queue, then play it through the speaker.
+    """
 
-                # Play the audio
-                sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
-                sd.wait()
+    # Thread main loop
+    while True:
 
-                # Print time
-                if DEBUG:
-                    print(f"TTS time: {round(time.time() - timestamp, 1)} sec")
+        # Get message from queue
+        while not sound_q.empty():
+            wav = sound_q.get()
+
+            # Notify main thread that we're done
+            if wav is None:
+                sound_semaphore.release()
+                continue
+
+            # Play the sound
+            sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
+            sd.wait()
 
         # Let the thread rest
         time.sleep(0.1)
@@ -284,17 +322,24 @@ def main():
     # Initialize Ollama client
     chat_client = ollama.Client(host=OLLAMA_SERVER_URL)
 
-    # Create regex pattern for parsing sentences
-    sentence_pattern = regex.compile(SENTENCE_REGEX, flags=regex.VERSION1)
+    # Semaphore used to notify main thread when TTS is done playing
+    sound_semaphore = threading.BoundedSemaphore(1)
+    sound_semaphore.acquire()
 
-    # Semaphore used to notify main thread when TTS is done
-    tts_semaphore = threading.BoundedSemaphore(1)
-    tts_semaphore.acquire()
-
-    # Start TTS thread
+    # Start TTS and sound threads
     msg_queue = queue.Queue()
-    tts_thread = threading.Thread(target=start_tts_thread, args=(msg_queue, tts_semaphore))
-    tts_thread.start()
+    if TTS_ENABLE:
+        sound_queue = queue.Queue()
+        tts_thread = threading.Thread(
+            target=start_tts_thread,
+            args=(msg_queue, sound_queue)
+        )
+        tts_thread.start()
+        sound_thread = threading.Thread(
+            target=start_sound_thread,
+            args=(sound_queue, sound_semaphore)
+        )
+        sound_thread.start()
 
     # Superloop
     msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
@@ -331,13 +376,18 @@ def main():
         else:
             if DEBUG:
                 print("No sound detected. Returning to wake word detection.")
-            continuese
+            continue
 
         # Perform actions for particular phrases
         if text in ACTION_CLEAR_HISTORY:
             if DEBUG:
-                print("ACTION: clearning history")
+                print("ACTION: clearing history")
             msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
+            play_msg(
+                "OK. Your chat history is cleared.",
+                msg_queue,
+                sound_semaphore
+            )
             continue
         elif text in ACTION_STOP:
             if DEBUG:
@@ -363,14 +413,14 @@ def main():
                 chat_client,
                 msg,
                 msg_history,
-                msg_queue,
-                sentence_pattern
+                msg_queue
             )
             if DEBUG:
                 print(f"LLM time: {round(time.time() - timestamp, 1)} sec")
 
             # Wait for TTS thread to finish
-            tts_semaphore.acquire(blocking=True)
+            if TTS_ENABLE:
+                sound_semaphore.acquire(blocking=True)
             if DEBUG:
                 print(f"Full query complete in {round(time.time() - wall_timestamp, 1)} sec")
 
