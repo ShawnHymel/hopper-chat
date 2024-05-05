@@ -1,5 +1,13 @@
+#!/usr/bin/python3
 """
 Hopper Chat with Ollama backend (local network)
+
+See README to install Docker images for LLM and TTS servers (can be on another computer).
+
+Install dependencies and run:
+
+    python -m pip install -r requirements.txt
+    python hopper-chat.py -c ./hopper-chat.conf
 
 Ollama models: https://ollama.com/library
 Rhasspy Piper TTS models: https://github.com/rhasspy/piper/blob/master/VOICES.md
@@ -18,6 +26,8 @@ from collections import deque
 import time
 import io
 import threading
+from configparser import ConfigParser
+import argparse
 
 import regex
 import requests
@@ -28,73 +38,6 @@ import sounddevice as sd
 import soundfile as sf
 from vosk import Model, KaldiRecognizer, SetLogLevel
 import ollama
-
-#---------------------------------------------------------------------------------------------------
-# Settings
-
-# Print stuff to console
-DEBUG = True
-
-# Set input and output audio devices (get from the "Available sound devices")
-AUDIO_INPUT_INDEX = 1
-AUDIO_OUTPUT_INDEX = 2
-
-# Volume (1.0 = normal, 2.0 = double volume)
-AUDIO_OUTPUT_VOLUME = 1.0
-
-# Sample rate (determined by speaker hardware)
-AUDIO_OUTPUT_SAMPLE_RATE = 48000
-
-# Set notification sound (when wake phrase is heard). Leave blank for no notification sound.
-NOTIFICATION_PATH = "./sounds/cowbell.wav"
-
-# Set wake words or phrases
-WAKE_PHRASES = [
-    "hey hopper",
-    "a hopper",
-]
-
-# Set action phrases
-ACTION_CLEAR_HISTORY = [    # Clear chat history
-    "clear history",
-    "clear chat history",
-]
-ACTION_STOP = [             # Return to waiting for wake phrase
-    "stop",
-    "stop listening",
-    "nevermind", 
-    "never mind",
-]
-
-# Server settings
-SERVER_IP = "10.0.0.100"
-
-# Chat settings
-CHAT_MAX_HISTORY = 20           # Number of prompts and replies to remember
-CHAT_MAX_REPLY_SENTENCES = 2    # Max number of sentences to respond with (0 is infinite)
-SENTENCE_REGEX = r"(?<=\.|\?|\!|\:|\;|\.\.\.|\n|\n\n)\s+(?=[A-Z0-9]|\Z)"    # Parsing sentences
-
-# Ollama settings
-OLLAMA_SERVER_URL = f"http://{SERVER_IP}:10802"
-OLLAMA_MODEL = "llama3:8b"      # Must match what the server is running
-
-
-# TTS settings
-TTS_ENABLE = True
-PIPER_URL = f"http://{SERVER_IP}:10803"
-TTS_MODEL_SAMPLE_RATE = 22050   # Determined by model
-
-# Interface
-WELCOME_MSG = f"""
-   __ __                         _______        __ 
-  / // /__  ___  ___  ___ ____  / ___/ /  ___ _/ /_
- / _  / _ \/ _ \/ _ \/ -_) __/ / /__/ _ \/ _ `/ __/
-/_//_/\___/ .__/ .__/\__/_/    \___/_//_/\_,_/\__/ 
-         /_/  /_/                                  
-
-Welcome to Hopper Chat! Say the wake phrase "Hey, Hopper" and ask a question.
-Press 'ctrl+c' to exit.
-"""
 
 #---------------------------------------------------------------------------------------------------
 # Classes
@@ -114,6 +57,9 @@ class FixedSizeQueue:
 
 #---------------------------------------------------------------------------------------------------
 # Functions
+
+def parse_config_list(list_as_string):
+    return [element.strip().strip('"') for element in list_as_string.strip().split(',')]
 
 def record_callback(in_data, frames, time, status, q):
     """
@@ -363,6 +309,9 @@ def start_tts_thread(tts_q, sound_q):
                 sound_q.put(None)
                 continue
 
+            if DEBUG:
+                print("Starting TTS")
+
             # Make request
             params = {"text": msg,}
             resp = requests.get(PIPER_URL, params=params)
@@ -378,6 +327,9 @@ def start_tts_thread(tts_q, sound_q):
 
             # Queue the audio
             sound_q.put(wav)
+
+            if DEBUG:
+                print("Done TTS")
 
         # Let the thread rest
         time.sleep(0.1)
@@ -399,9 +351,15 @@ def start_sound_thread(sound_q, sound_semaphore):
                 sound_semaphore.release()
                 continue
 
+            if DEBUG:
+                print("Starting sound play")
+
             # Play the sound
             sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
             sd.wait()
+
+            if DEBUG:
+                print("Done sound play")
 
         # Let the thread rest
         time.sleep(0.1)
@@ -414,11 +372,6 @@ def main():
     # Set Vosk logging
     if not DEBUG:
         SetLogLevel(-1)
-
-    # Print available sound devices
-    if DEBUG:
-        print("Available sound devices:")
-        print(sd.query_devices())
 
     # Set the input and output devices
     sd.default.device = [AUDIO_INPUT_INDEX, AUDIO_OUTPUT_INDEX]
@@ -451,6 +404,78 @@ def main():
         args=(in_q, tts_q, sound_semaphore)
     )
     chat_thread.start()
+
+#---------------------------------------------------------------------------------------------------
+# Settings
+
+# Interface
+WELCOME_MSG = """
+   __ __                         _______        __ 
+  / // /__  ___  ___  ___ ____  / ___/ /  ___ _/ /_
+ / _  / _ \/ _ \/ _ \/ -_) __/ / /__/ _ \/ _ `/ __/
+/_//_/\___/ .__/ .__/\__/_/    \___/_//_/\_,_/\__/ 
+         /_/  /_/                                  
+
+Welcome to Hopper Chat! Say the wake phrase "Hey, Hopper" and ask a question.
+Press 'ctrl+c' to exit.
+"""
+
+# Parsing sentences
+SENTENCE_REGEX = r"(?<=\.|\?|\!|\:|\#|\.\.\.|\n|\n\n)\s+(?=[A-Z0-9]|\Z)"
+
+# Parse configuration file
+PARSER = argparse.ArgumentParser(description="Hopper Chat")
+PARSER.add_argument(
+    "--config",
+    "-c",
+    type=str,
+    default="hopper-chat.conf",
+    help="Path to the configuration file"
+)
+ARGS = PARSER.parse_args()
+CONFIG_FILE_PATH = ARGS.config
+
+# Parse config file
+config = ConfigParser(inline_comment_prefixes="#")
+config.read(CONFIG_FILE_PATH)
+
+# Assign settings
+DEBUG = config.getboolean("settings", "DEBUG", fallback=False)
+AUDIO_INPUT_INDEX = config.getint("settings", "AUDIO_INPUT_INDEX", fallback=0)
+AUDIO_OUTPUT_INDEX = config.getint("settings", "AUDIO_OUTPUT_INDEX", fallback=1)
+AUDIO_OUTPUT_VOLUME = config.getfloat("settings", "AUDIO_OUTPUT_VOLUME", fallback=1.0)
+AUDIO_OUTPUT_SAMPLE_RATE = config.getint("settings", "AUDIO_OUTPUT_SAMPLE_RATE", fallback=48000)
+NOTIFICATION_PATH = config.get(
+    "settings",
+    "NOTIFICATION_PATH",
+    fallback="./sounds/cowbell.wav"
+).strip('"')
+SERVER_IP = config.get("settings", "SERVER_IP", fallback="127.0.0.1").strip('"')
+CHAT_MAX_HISTORY = config.getint("settings", "CHAT_MAX_HISTORY", fallback=20)
+CHAT_MAX_REPLY_SENTENCES = config.getint("settings", "CHAT_MAX_REPLY_SENTENCES", fallback=0)
+OLLAMA_SERVER_PORT = config.getint("settings", "OLLAMA_SERVER_PORT", fallback=10802)
+OLLAMA_MODEL = config.get("settings", "OLLAMA_MODEL", fallback="llama3:8b").strip('"')
+TTS_ENABLE = config.getboolean("settings", "TTS_ENABLE", fallback=True)
+PIPER_SERVER_PORT = config.getint("settings", "PIPER_SERVER_PORT", fallback=10803)
+TTS_MODEL_SAMPLE_RATE = config.getint("settings", "TTS_MODEL_SAMPLE_RATE", fallback=22050)
+
+# Parse the lists
+WAKE_PHRASES = parse_config_list(
+    config.get("settings", "WAKE_PHRASES", fallback=["hey hopper"])
+)
+ACTION_CLEAR_HISTORY = parse_config_list(
+    config.get("settings", "ACTION_CLEAR_HISTORY", fallback=["clear chat history"])
+)
+ACTION_STOP = parse_config_list(
+    config.get("settings", "ACTION_STOP", fallback=["nevermind"])
+)
+
+# Construct server URL strings
+OLLAMA_SERVER_URL = f"http://{SERVER_IP}:{OLLAMA_SERVER_PORT}"
+PIPER_URL = f"http://{SERVER_IP}:{PIPER_SERVER_PORT}"
+
+#---------------------------------------------------------------------------------------------------
+# Entrypoint
 
 if __name__ == "__main__":
     print(WELCOME_MSG)
