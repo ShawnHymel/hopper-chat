@@ -3,6 +3,9 @@ import io
 import queue
 import threading
 import json
+from collections import deque
+from configparser import ConfigParser
+import argparse
 
 import resampy
 import requests
@@ -10,9 +13,6 @@ import numpy as np
 import soundfile as sf
 import sounddevice as sd
 import regex
-from collections import deque
-from configparser import ConfigParser
-import argparse
 from vosk import Model, KaldiRecognizer, SetLogLevel
 import ollama
 from gpiozero import LED

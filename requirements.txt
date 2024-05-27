@@ -7,3 +7,4 @@ openai==1.23.2
 resampy==0.4.3
 ollama==0.1.9
 regex==2024.4.16
+gpiozero==2.0.1
