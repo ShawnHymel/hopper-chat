@@ -1,43 +1,21 @@
-#!/usr/bin/python3
-"""
-Hopper Chat with Ollama backend (local network)
-
-See README to install Docker images for LLM and TTS servers (can be on another computer).
-
-Install dependencies and run:
-
-    python -m pip install -r requirements.txt
-    python hopper-chat.py -c ./hopper-chat.conf
-
-Ollama models: https://ollama.com/library
-Rhasspy Piper TTS models: https://github.com/rhasspy/piper/blob/master/VOICES.md
-
-Author: Shawn Hymel
-Date: April 20, 2024
-License: 0BSD (https://opensource.org/license/0bsd)
-"""
-
-import queue
-import time
-import sys
-import json
-import os
-from collections import deque
 import time
 import io
+import queue
 import threading
+import json
+
+import resampy
+import requests
+import numpy as np
+import soundfile as sf
+import sounddevice as sd
+import regex
+from collections import deque
 from configparser import ConfigParser
 import argparse
-
-import regex
-import requests
-from dotenv import load_dotenv
-import numpy as np
-import resampy
-import sounddevice as sd
-import soundfile as sf
 from vosk import Model, KaldiRecognizer, SetLogLevel
 import ollama
+from gpiozero import LED
 
 #---------------------------------------------------------------------------------------------------
 # Classes
@@ -82,7 +60,7 @@ def wait_for_stt(q, recognizer):
     ):
         if DEBUG:
             print("Listening...")
-    
+
         # Perform keyword spotting
         while True:
             data = q.get()
@@ -144,7 +122,7 @@ def query_chat(chat_client, msg, msg_history, q):
 
         # Get the next string part from the stream
         part = chunk["message"]["content"]
-        reply = reply + part
+        reply += part
 
         # Parse sentences and put them into the queue
         tmp_str = sentences[0] + part
@@ -175,7 +153,6 @@ def query_chat(chat_client, msg, msg_history, q):
 
     # Print the chat
     if DEBUG:
-        # print(msg_history.get())
         print(f"Whole reply: {reply}")
 
 def start_chat_thread(in_q, tts_q, sound_semaphore):
@@ -212,7 +189,7 @@ def start_chat_thread(in_q, tts_q, sound_semaphore):
     # Main chat loop
     msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
     while True:
-        
+
         # Listen for wake word or phrase
         timestamp = time.time()
         text = wait_for_stt(in_q, recognizer)
@@ -254,7 +231,8 @@ def start_chat_thread(in_q, tts_q, sound_semaphore):
             play_msg(
                 "OK. My chat history is cleared.",
                 tts_q,
-                sound_semaphore
+                sound_semaphore,
+                servo_notify
             )
             continue
         elif text in ACTION_STOP:
@@ -296,72 +274,34 @@ def start_tts_thread(tts_q, sound_q):
     """
     Wait for message in queue, send it to TTS server, then queue up sound to be played.
     """
-
-    # Thread main loop
     while True:
-
-        # Get message from queue
         while not tts_q.empty():
             msg = tts_q.get()
-
-            # Notify sound thread that we're done
             if msg is None:
                 sound_q.put(None)
                 continue
-
-            if DEBUG:
-                print("Starting TTS")
-
-            # Make request
-            params = {"text": msg,}
+            params = {"text": msg}
             resp = requests.get(PIPER_URL, params=params)
-
-            # Resample the audio
             wav, sample_rate = sf.read(io.BytesIO(resp.content))
             wav = np.array(wav) * AUDIO_OUTPUT_VOLUME
-            wav = resampy.resample(
-                wav,
-                sample_rate,
-                AUDIO_OUTPUT_SAMPLE_RATE
-            )
-
-            # Queue the audio
+            wav = resampy.resample(wav, sample_rate, AUDIO_OUTPUT_SAMPLE_RATE)
             sound_q.put(wav)
-
-            if DEBUG:
-                print("Done TTS")
-
-        # Let the thread rest
         time.sleep(0.1)
 
-def start_sound_thread(sound_q, sound_semaphore):
+def start_sound_thread(sound_q, sound_semaphore, servo_notify):
     """
     Wait for sound binary in queue, then play it through the speaker.
     """
-
-    # Thread main loop
     while True:
-
-        # Get message from queue
         while not sound_q.empty():
             wav = sound_q.get()
-
-            # Notify main thread that we're done
             if wav is None:
                 sound_semaphore.release()
                 continue
-
-            if DEBUG:
-                print("Starting sound play")
-
-            # Play the sound
+            servo_notify.on()
             sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
             sd.wait()
-
-            if DEBUG:
-                print("Done sound play")
-
-        # Let the thread rest
+            servo_notify.off()
         time.sleep(0.1)
 
 #---------------------------------------------------------------------------------------------------
@@ -369,52 +309,68 @@ def start_sound_thread(sound_q, sound_semaphore):
 
 def main():
 
-    # Set Vosk logging
-    if not DEBUG:
-        SetLogLevel(-1)
+    # Servo notify pin
+    servo_notify = LED(SERVO_NOTIFY_PIN)
 
-    # Set the input and output devices
-    sd.default.device = [AUDIO_INPUT_INDEX, AUDIO_OUTPUT_INDEX]
+    try:
 
-    # Set up queue and callback
-    in_q = queue.Queue()
+        # Set Vosk logging
+        if not DEBUG:
+            SetLogLevel(-1)
 
-    # Semaphore used to notify main thread when TTS is done playing
-    sound_semaphore = threading.BoundedSemaphore(1)
-    sound_semaphore.acquire()
+        # Set the input and output devices
+        sd.default.device = [AUDIO_INPUT_INDEX, AUDIO_OUTPUT_INDEX]
 
-    # Start TTS and sound threads
-    tts_q = queue.Queue()
-    if TTS_ENABLE:
-        sound_q = queue.Queue()
-        tts_thread = threading.Thread(
-            target=start_tts_thread,
-            args=(tts_q, sound_q)
+        # Set up queue and callback
+        in_q = queue.Queue()
+
+        # Semaphore used to notify main thread when TTS is done playing
+        sound_semaphore = threading.BoundedSemaphore(1)
+        sound_semaphore.acquire()
+
+        # Start TTS and sound threads
+        tts_q = queue.Queue()
+        if TTS_ENABLE:
+            sound_q = queue.Queue()
+            tts_thread = threading.Thread(
+                target=start_tts_thread, 
+                args=(tts_q, sound_q)
+            )
+            tts_thread.start()
+            sound_thread = threading.Thread(
+                target=start_sound_thread, 
+                args=(sound_q, sound_semaphore, servo_notify)
+            )
+            sound_thread.start()
+
+        # Start STT and chat thread
+        chat_thread = threading.Thread(
+            target=start_chat_thread, 
+            args=(in_q, tts_q, sound_semaphore)
         )
-        tts_thread.start()
-        sound_thread = threading.Thread(
-            target=start_sound_thread,
-            args=(sound_q, sound_semaphore)
-        )
-        sound_thread.start()
+        chat_thread.start()
 
-    # Start STT and chat thread
-    chat_thread = threading.Thread(
-        target=start_chat_thread,
-        args=(in_q, tts_q, sound_semaphore)
-    )
-    chat_thread.start()
+        # Keep main thread running
+        while True:
+            time.sleep(1.0)
+
+    # Make sure to free up GPIO resources
+    except KeyboardInterrupt:
+        print("Main program stopped")
+    finally:
+        servo_notify.close()
 
 #---------------------------------------------------------------------------------------------------
 # Settings
 
 # Interface
 WELCOME_MSG = """
-   __ __                         _______        __ 
-  / // /__  ___  ___  ___ ____  / ___/ /  ___ _/ /_
- / _  / _ \/ _ \/ _ \/ -_) __/ / /__/ _ \/ _ `/ __/
-/_//_/\___/ .__/ .__/\__/_/    \___/_//_/\_,_/\__/ 
-         /_/  /_/                                  
+    __ __                         _______        __ 
+   / // /__  ___  ___  ___ ____  / ___/ /  ___ _/ /_
+  / _  / _ \/ _ \/ _ \/ -_) __/ / /__/ _ \/ _ `/ __/
+ /__/_/\___/ .__/ .__/\__/_/    \___/_//_/\_,_/\__/ 
+          /_/  /_/                                  
+
 
 Welcome to Hopper Chat! Say the wake phrase "Hey, Hopper" and ask a question.
 Press 'ctrl+c' to exit.
@@ -469,6 +425,7 @@ ACTION_CLEAR_HISTORY = parse_config_list(
 ACTION_STOP = parse_config_list(
     config.get("settings", "ACTION_STOP", fallback=["nevermind"])
 )
+SERVO_NOTIFY_PIN = config.getint("settings", "SERVO_NOTIFY_PIN", fallback=18)
 
 # Construct server URL strings
 OLLAMA_SERVER_URL = f"http://{SERVER_IP}:{OLLAMA_SERVER_PORT}"
@@ -479,4 +436,7 @@ PIPER_URL = f"http://{SERVER_IP}:{PIPER_SERVER_PORT}"
 
 if __name__ == "__main__":
     print(WELCOME_MSG)
+    print(f"TTS: {TTS_ENABLE}")
+    print(f"Servo notify pin: {SERVO_NOTIFY_PIN}")
     main()
+
