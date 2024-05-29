@@ -50,6 +50,8 @@ docker build -t ollama -f servers/ollama/Dockerfile .
 docker build -t piper-tts -f servers/piper-tts/Dockerfile .
 ```
 
+> **Note:** To build the servers for the NVIDIA Jetson Nano, use *servers/ollama/Dockerfile.orin* and *servers/piper-tts/Dockerfile.orin* instead. Note that both were tested and version pinned to [JetPack 6.0](https://developer.nvidia.com/embedded/jetpack-sdk-60dp).
+
 Run the Ollama server.
 
 ```sh

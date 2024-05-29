@@ -5,40 +5,28 @@ from ollama import Client
 chat_client = Client(host="http://0.0.0.0:10802")
 prompt = "tell me a joke"
 
-# Global message history
-messages = []
-
 def send(chat):
-  
-  global messages
 
-  messages.append(
-    {
-      'role': 'user',
+  # Send message to LLM server
+  messages = [{
+     'role': 'user',
       'content': chat,
-    }
-  )
-  stream = chat_client.chat(model='llama3:8b', 
+  }]
+  response = chat_client.chat(model='llama3:8b', 
     messages=messages,
-    stream=True,
+    stream=False,
   )
 
-  response = ""
-  for chunk in stream:
-    part = chunk['message']['content']
-    response += part
-    print(f"{chunk}")
+  # Calculate tokens per second
+  tokens = response["eval_count"]
+  eval_time = response["eval_duration"] / 10**9
+  tokens_per_second = tokens / eval_time
 
-  print(f"Response: {response}")
-
-  messages.append(
-    {
-      'role': 'assistant',
-      'content': response,
-    }
-  )
-
-  print("")
+  # Print metrics
+  print(f"Response: {response['message']['content']}")
+  print(f"Tokens: {tokens}")
+  print(f"Eval time (sec): {eval_time}")
+  print(f"Tokens per second: {tokens_per_second}")
 
 def main():
    send(prompt)
