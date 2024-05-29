@@ -13,7 +13,7 @@ OLLAMA_MODEL = "llama3:8b"      # Must match what the server is running
 # New settings
 SENTENCE_REGEX = r"(?<=\.|\?|\!|\:|\;|\.\.\.|\n|\n\n)\s+(?=[A-Z0-9]|\Z)"
 
-chat_client = Client(host="http://10.0.0.100:10802")
+chat_client = Client(host="http://0.0.0.0:10802")
 messages = []
 
 # Create regex pattern

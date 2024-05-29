@@ -9,14 +9,6 @@ messages = []
 # Create regex pattern
 pattern = regex.compile(SENTENCE_REGEX, flags=regex.VERSION1)
 
-def split_sentences(str):
-  start_idx = 0
-  for i, char in enumerate(str):
-    if char in SENTENCE_DELIMITERS:
-      sentence = str[start_idx:i + 1].strip()
-      print(sentence)
-      start_idx = i + 1
-
 def send(chat):
   messages.append(
     {
