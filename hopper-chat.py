@@ -231,8 +231,7 @@ def start_chat_thread(in_q, tts_q, sound_semaphore):
             play_msg(
                 "OK. My chat history is cleared.",
                 tts_q,
-                sound_semaphore,
-                servo_notify
+                sound_semaphore
             )
             continue
         elif text in ACTION_STOP:
