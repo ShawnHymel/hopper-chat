@@ -9,9 +9,9 @@ You'll need a speaker and a microphone. The better the microphone, the better ch
  * Microphone: [Upgraded USB Conference Microphone](https://www.amazon.com/gp/product/B08GPPQH9B/)
  * Speaker: [USB Mini Computer Speaker](https://www.amazon.com/gp/product/B075M7FHM1)
 
-## Getting Started
+## Getting Started - Server
 
-### Run LLM and TTS servers
+### Run LLM and TTS Servers
 
 We're going to run the LLM and TTS servers on a more powerful computer (e.g. laptop) in Linux. 
 
@@ -74,15 +74,23 @@ docker image rm piper-tts
 docker builder prune
 ```
 
-### Install client OS
+## Getting Started - Client
+
+### Install Client OS
 
 Next, we're going to run the client on a Raspberry Pi that performs STT and talks to the LLM and TTS servers across a local network.
 
-Install [Raspberry Pi OS](https://www.raspberrypi.com/software/). This was tested on Raspberry Pi OS release 2023-05-03. In theory, this should work with the headless version (Raspberry Pi OS Lite), but I have not tested it.
+Install [Raspberry Pi OS](https://www.raspberrypi.com/software/). This was tested on Raspberry Pi OS release 2024-03-15. In theory, this should work with the headless version (Raspberry Pi OS Lite), but I have not tested it.
 
 Plug in the microphone and speaker.
 
 ### Install Dependencies
+
+Install OS libraries:
+
+```sh
+sudo apt install -y libportaudio2 alsa-utils
+```
 
 Download this repository.
 
@@ -112,22 +120,13 @@ python -m pip install -r requirements.txt
 
 ### Setup
 
-To start, you'll likely want to adjust your speaker volume. Either do that through the desktop GUI or using *alsamixer*:
-
-```sh
-sudo apt install alsa-utils
-alsamixer
-```
-
-Press *F6* to view the individual audio devices. Select your speaker and adjust the volume to the desired level.
-
-Next, you need to figure out the index numbers for your microphone and speaker. Run the following:
+To start, you need to figure out the names and index numbers for your microphone and speaker. Run the following:
 
 ```sh
 python -c "import sounddevice; print(sounddevice.query_devices())"
 ```
 
-You should see something like the output below. Note the index number for each one.
+You should see something like the output below. Note the name and index number for each one.
 
 ```sh
 Available sound devices:
@@ -146,17 +145,31 @@ Available sound devices:
 
 In the above printout, my USB microphone is `1 UM02` and my USB speaker is `2 UACDemoV1.0`. 
 
-In *hopper-chat.conf*, change the input and output index numbers to match your desired audio devices:
+Next, you'll likely want to adjust your speaker volume. Either do that through the desktop GUI or using *alsamixer*:
+
+```sh
+alsamixer
+```
+
+Press *F6* to view the individual audio devices. Select your speaker and adjust the volume to the desired level. Press *Esc* to save and exit alsamixer.
+
+Edit *hopper-chat.conf*:
+
+```sh
+nano hopper-chat.conf
+```
+
+Change the input and output index numbers to match your desired audio devices. For example:
 
 ```python
 AUDIO_INPUT_INDEX = 1
 AUDIO_OUTPUT_INDEX = 2
 ```
 
-Also in *hopper-chat.conf, change the IP address of your server (the computer that's running Ollama and Piper TTS):
+Also in *hopper-chat.conf*, change the IP address of your server (the computer that's running Ollama and Piper TTS). For example:
 
 ```python
-SERVER_IP = "10.0.0.100"
+SERVER_IP = "10.0.42.1"
 ```
 
 If, for some reason, your speaker cannot handle 48 kHz output, you will need to find out the sample rate of your speaker and change the output sample rate value:
@@ -172,6 +185,8 @@ Run the script, and it should start listening for the wake phrase ("Hey, Hopper!
 ```sh
 python hopper-chat.py
 ```
+
+> **Important!** You need to run the script once while your client is connected to the Internet so it can download the STT model. Once the model has been saved (cached), you can disconnect the client from the Internet to run the script again.
 
 Note that you can copy the configuration file to somewhere else on your computer (so that your settings will be saved if you update the client code with e.g. `git pull`). You can pass the configuration file path to the application. For example:
 
