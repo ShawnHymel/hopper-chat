@@ -186,6 +186,9 @@ def start_chat_thread(in_q, tts_q, sound_semaphore):
     # Initialize Ollama client
     chat_client = ollama.Client(host=OLLAMA_SERVER_URL)
 
+    # Get timestamp for random quote
+    quote_timestamp = time.time()
+
     # Main chat loop
     msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
     while True:
@@ -200,6 +203,34 @@ def start_chat_thread(in_q, tts_q, sound_semaphore):
                 print(f"Wake phrase detected.")
                 print(f"STT time: {round(time.time() - timestamp, 1)} sec")
         else:
+
+            # If wake word is not heard, do a random quote every now and then
+            if QUOTE_INTERVAL > 0 and time.time() >= quote_timestamp + QUOTE_INTERVAL:
+                quote_timestamp = time.time()
+
+                # Start wall clock timer
+                wall_timestamp = time.time()
+
+                # Ask for a random quote. Sentences are added to TTS queue.
+                msg = "Tell me a random fact"
+                if DEBUG:
+                    print(f"Sending: {msg}")
+                timestamp = time.time()
+                query_chat(
+                    chat_client,
+                    msg,
+                    msg_history,
+                    tts_q
+                )
+                if DEBUG:
+                    print(f"LLM time: {round(time.time() - timestamp, 1)} sec")
+
+                # Wait for TTS thread to finish
+                if TTS_ENABLE:
+                    sound_semaphore.acquire(blocking=True)
+                if DEBUG:
+                    print(f"Full query complete in {round(time.time() - wall_timestamp, 1)} sec")
+
             continue
 
         # Play notification sound
@@ -408,6 +439,7 @@ NOTIFICATION_PATH = config.get(
 SERVER_IP = config.get("settings", "SERVER_IP", fallback="127.0.0.1").strip('"')
 CHAT_MAX_HISTORY = config.getint("settings", "CHAT_MAX_HISTORY", fallback=20)
 CHAT_MAX_REPLY_SENTENCES = config.getint("settings", "CHAT_MAX_REPLY_SENTENCES", fallback=0)
+QUOTE_INTERVAL = config.getint("settings", "QUOTE_INTERVAL", fallback=0)
 OLLAMA_SERVER_PORT = config.getint("settings", "OLLAMA_SERVER_PORT", fallback=10802)
 OLLAMA_MODEL = config.get("settings", "OLLAMA_MODEL", fallback="llama3:8b").strip('"')
 TTS_ENABLE = config.getboolean("settings", "TTS_ENABLE", fallback=True)
