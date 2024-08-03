@@ -14,8 +14,9 @@ RUN \
     cd src/python_run/ && \
     python3 -m pip install -e . && \
     python3 -m pip install -r requirements_http.txt && \
-    wget -O onnxruntime_gpu-1.18.0-cp310-cp310-linux_aarch64.whl https://nvidia.box.com/shared/static/48dtuob7meiw6ebgfsfqakc9vse62sg4.whl && \
-    python3 -m pip install onnxruntime_gpu-1.18.0-cp310-cp310-linux_aarch64.whl && \
+    python3 -m pip uninstall -y onnxruntime && \
+    wget -O onnxruntime_gpu-1.17.0-cp310-cp310-linux_aarch64.whl https://nvidia.box.com/shared/static/i7n40ki3pl2x57vyn4u7e9asyiqlnl7n.whl && \
+    python3 -m pip install onnxruntime_gpu-1.17.0-cp310-cp310-linux_aarch64.whl && \
     mkdir -p /app/models/ && \
     cd /app/models/ && \
     wget -O model.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/low/en_US-lessac-low.onnx?download=true && \

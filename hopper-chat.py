@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import time
 import io
 import queue
@@ -10,12 +12,11 @@ import argparse
 import resampy
 import requests
 import numpy as np
-import soundfile as sf
+from scipy.io import wavfile
 import sounddevice as sd
 import regex
 from vosk import Model, KaldiRecognizer, SetLogLevel
 import ollama
-from gpiozero import LED
 
 #---------------------------------------------------------------------------------------------------
 # Classes
@@ -170,7 +171,9 @@ def start_chat_thread(in_q, tts_q, sound_semaphore):
 
     # Load notification sound into memory
     if NOTIFICATION_PATH:
-        notification_wav, notification_sample_rate = sf.read(NOTIFICATION_PATH)
+        notification_sample_rate, notification_wav = wavfile.read(NOTIFICATION_PATH)
+        if notification_wav.dtype == np.int16:
+            notification_wav = notification_wav.astype(np.float32) / np.iinfo(np.int16).max
         notification_wav = np.array(notification_wav) * AUDIO_OUTPUT_VOLUME
         notification_wav = resampy.resample(
             notification_wav,
@@ -275,17 +278,47 @@ def start_tts_thread(tts_q, sound_q):
     """
     while True:
         while not tts_q.empty():
+
+            # Get message from queue
             msg = tts_q.get()
             if msg is None:
                 sound_q.put(None)
                 continue
+
+            # Send message to TTS server
             params = {"text": msg}
             resp = requests.get(PIPER_URL, params=params)
-            wav, sample_rate = sf.read(io.BytesIO(resp.content))
+            if resp.status_code != 200:
+                raise RuntimeError(f"Failed to get response from TTS server: {resp.status_code}")
+
+            # Convert response to NumPy array and convert to float
+            sample_rate, wav = wavfile.read(io.BytesIO(resp.content))
+            if wav.dtype == np.int16:
+                wav = wav.astype(np.float32) / np.iinfo(np.int16).max
+
+            # Adjust volume and resample
             wav = np.array(wav) * AUDIO_OUTPUT_VOLUME
-            wav = resampy.resample(wav, sample_rate, AUDIO_OUTPUT_SAMPLE_RATE)
+            if sample_rate != AUDIO_OUTPUT_SAMPLE_RATE:
+                wav = resampy.resample(
+                    wav,
+                    sample_rate,
+                    AUDIO_OUTPUT_SAMPLE_RATE
+                )
+
+            # Put sound in queue
             sound_q.put(wav)
+        
         time.sleep(0.1)
+
+def digital_write(ctrl, pin, value):
+    """
+    Controls a pin on or off. `ctrl` is the GPIO package or control object.
+    """
+    if pin != -1:
+        if platform == "pi":
+            ctrl.value = value
+        elif platform == "jetson":
+            ctrl.output(pin, value)
 
 def start_sound_thread(sound_q, sound_semaphore, servo_notify):
     """
@@ -297,10 +330,10 @@ def start_sound_thread(sound_q, sound_semaphore, servo_notify):
             if wav is None:
                 sound_semaphore.release()
                 continue
-            servo_notify.on()
+            digital_write(servo_notify, SERVO_NOTIFY_PIN, 1)
             sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
             sd.wait()
-            servo_notify.off()
+            digital_write(servo_notify, SERVO_NOTIFY_PIN, 0)
         time.sleep(0.1)
 
 #---------------------------------------------------------------------------------------------------
@@ -309,7 +342,15 @@ def start_sound_thread(sound_q, sound_semaphore, servo_notify):
 def main():
 
     # Servo notify pin
-    servo_notify = LED(SERVO_NOTIFY_PIN)
+    servo_notify = None
+    if platform == "pi" and SERVO_NOTIFY_PIN != -1:
+        import gpiozero
+        servo_notify = gpiozero.LED(SERVO_NOTIFY_PIN)
+    elif platform == "jetson" and SERVO_NOTIFY_PIN != -1:
+        import Jetson.GPIO
+        Jetson.GPIO.setmode(Jetson.GPIO.BCM)
+        Jetson.GPIO.setup(SERVO_NOTIFY_PIN, Jetson.GPIO.OUT)
+        servo_notify = Jetson.GPIO
 
     try:
 
@@ -424,11 +465,24 @@ ACTION_CLEAR_HISTORY = parse_config_list(
 ACTION_STOP = parse_config_list(
     config.get("settings", "ACTION_STOP", fallback=["nevermind"])
 )
-SERVO_NOTIFY_PIN = config.getint("settings", "SERVO_NOTIFY_PIN", fallback=18)
+SERVO_NOTIFY_PIN = config.getint("settings", "SERVO_NOTIFY_PIN", fallback=-1)
 
 # Construct server URL strings
 OLLAMA_SERVER_URL = f"http://{SERVER_IP}:{OLLAMA_SERVER_PORT}"
 PIPER_URL = f"http://{SERVER_IP}:{PIPER_SERVER_PORT}"
+
+# Import GPIO library depending on platform
+platform = "other"
+try:
+    with open("/proc/device-tree/model", "r") as f:
+        hw = f.read().strip()
+        if "Raspberry Pi" in hw:
+            platform = "pi"
+        elif "Jetson" in hw:
+            platform = "jetson"
+
+except FileNotFoundError:
+    pass
 
 #---------------------------------------------------------------------------------------------------
 # Entrypoint
@@ -437,5 +491,5 @@ if __name__ == "__main__":
     print(WELCOME_MSG)
     print(f"TTS: {TTS_ENABLE}")
     print(f"Servo notify pin: {SERVO_NOTIFY_PIN}")
+    print(f"Platform: {platform}")
     main()
-

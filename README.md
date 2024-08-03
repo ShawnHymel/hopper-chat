@@ -92,6 +92,12 @@ Install OS libraries:
 sudo apt install -y libportaudio2 alsa-utils
 ```
 
+If you are using the **Jetson Orin** as your client, you will need to install *venv*:
+
+```sh
+sudo apt install -y python3.10-venv
+```
+
 Download this repository.
 
 ```sh
@@ -112,7 +118,25 @@ python -m venv venv
 source venv/bin/activate
 ```
 
-Install other dependencies. I pinned the versions to ensure everything would work together:
+If you are running the client on a **Raspberry Pi**, you need to install the following dependencies manually:
+
+```sh
+python -m pip install gpiozero==2.0.1
+```
+
+If you are running the client on an **NVIDIA Jetson board**, you need to install a special version of *onnx-graphsurgeon* and the GPIO library. You will also need to set the correct user permissions to use the GPIO.
+
+> **WARNING!** The GPIO library does not seem to be working on the Jetson Orin right now. It will run in software, but the pins do not toggle. This is a problem for future Shawn to fix.
+
+```sh
+python -m pip install onnx-graphsurgeon==0.5.2 Jetson.GPIO==2.1.6
+sudo groupadd -f -r gpio
+sudo usermod -a -G gpio $USER
+sudo cp /home/$USER/.local/lib/python3.10/site-packages/Jetson/GPIO/99-gpio.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+After that, install the other dependencies. I pinned the versions to ensure everything would work together:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -193,6 +217,10 @@ Note that you can copy the configuration file to somewhere else on your computer
 ```sh
 python hopper-chat.py -c ~/Desktop/my-hopper.conf
 ```
+
+## Troubleshooting
+
+* If the TTS server gives you issues (e.g. you get an error like `Failed to get response from TTS server: 500`), then you can reset it with `sudo systemctl restart piper-tts.service`.
 
 ## License
 

@@ -7,13 +7,13 @@ import sounddevice as sd
 import soundfile as sf
 
 # URL and parameters
-url = 'http://10.0.0.100:10803'
+url = 'http://127.0.0.1:10803'
 params = {'text': 'This is a test.'}
 wav_path = "./test.wav"
 
 # Set input and output audio devices (get from the "Available sound devices")
 AUDIO_INPUT_INDEX = 1
-AUDIO_OUTPUT_INDEX = 2
+AUDIO_OUTPUT_INDEX = 0
 
 # Volume (1.0 = normal, 2.0 = double volume)
 AUDIO_OUTPUT_VOLUME = 0.5
