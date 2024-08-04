@@ -8,6 +8,7 @@ import json
 from collections import deque
 from configparser import ConfigParser
 import argparse
+import sys
 
 import resampy
 import requests
@@ -25,14 +26,21 @@ class FixedSizeQueue:
     """
     Fixed size array with FIFO
     """
-    def __init__(self, max_size):
+    def __init__(self, max_size, preamble=None):
         self.queue = deque(maxlen=max_size)
+        self.preamble = {
+            "role": "system",
+            "content": preamble
+        }
 
     def push(self, item):
         self.queue.append(item)
 
     def get(self):
-        return list(self.queue)
+        if self.preamble is None:
+            return list(self.queue)
+        else:
+            return [self.preamble] + list(self.queue)
 
 #---------------------------------------------------------------------------------------------------
 # Functions
@@ -190,7 +198,7 @@ def start_chat_thread(in_q, tts_q, sound_semaphore):
     chat_client = ollama.Client(host=OLLAMA_SERVER_URL)
 
     # Main chat loop
-    msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
+    msg_history = FixedSizeQueue(CHAT_MAX_HISTORY, CHAT_PREAMBLE)
     while True:
 
         # Listen for wake word or phrase
@@ -230,7 +238,7 @@ def start_chat_thread(in_q, tts_q, sound_semaphore):
         if text in ACTION_CLEAR_HISTORY:
             if DEBUG:
                 print("ACTION: clearing history")
-            msg_history = FixedSizeQueue(CHAT_MAX_HISTORY)
+            msg_history = FixedSizeQueue(CHAT_MAX_HISTORY, CHAT_PREAMBLE)
             play_msg(
                 "OK. My chat history is cleared.",
                 tts_q,
@@ -454,6 +462,7 @@ OLLAMA_MODEL = config.get("settings", "OLLAMA_MODEL", fallback="llama3:8b").stri
 TTS_ENABLE = config.getboolean("settings", "TTS_ENABLE", fallback=True)
 PIPER_SERVER_PORT = config.getint("settings", "PIPER_SERVER_PORT", fallback=10803)
 TTS_MODEL_SAMPLE_RATE = config.getint("settings", "TTS_MODEL_SAMPLE_RATE", fallback=22050)
+CHAT_PREAMBLE = config.get("settings", "CHAT_PREAMBLE", fallback="").strip('"')
 
 # Parse the lists
 WAKE_PHRASES = parse_config_list(
