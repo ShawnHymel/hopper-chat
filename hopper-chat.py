@@ -218,7 +218,8 @@ def start_chat_thread(in_q, tts_q, sound_semaphore):
             sd.play(
                 notification_wav,
                 samplerate=AUDIO_OUTPUT_SAMPLE_RATE,
-                device=AUDIO_OUTPUT_INDEX
+                device=AUDIO_OUTPUT_INDEX,
+                blocksize=2048
             )
             sd.wait()
 
@@ -339,7 +340,12 @@ def start_sound_thread(sound_q, sound_semaphore, servo_notify):
                 sound_semaphore.release()
                 continue
             digital_write(servo_notify, SERVO_NOTIFY_PIN, 1)
-            sd.play(wav, samplerate=AUDIO_OUTPUT_SAMPLE_RATE, device=AUDIO_OUTPUT_INDEX)
+            sd.play(
+                wav,
+                samplerate=AUDIO_OUTPUT_SAMPLE_RATE,
+                device=AUDIO_OUTPUT_INDEX,
+                blocksize=2048
+            )
             sd.wait()
             digital_write(servo_notify, SERVO_NOTIFY_PIN, 0)
         time.sleep(0.1)
